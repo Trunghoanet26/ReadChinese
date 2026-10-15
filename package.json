@@ -1,0 +1,39 @@
+{
+  "name": "readchinese",
+  "productName": "ReadChinese",
+  "version": "1.2.3",
+  "description": "OCR chữ Hán (RapidOCR) + pinyin trên từng chữ (pinyin-pro) + dịch Google & DeepSeek",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "debug": "electron . --enable-logging",
+    "dist": "electron-builder --win portable",
+    "dist:dir": "electron-builder --win dir"
+  },
+  "devDependencies": {
+    "electron": "33.4.11",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "io.github.readchinese",
+    "productName": "ReadChinese",
+    "files": [
+      "src/**",
+      "assets/**"
+    ],
+    "extraResources": [
+      {
+        "from": "python",
+        "to": "python",
+        "filter": ["*.py", "requirements.txt"]
+      }
+    ],
+    "win": {
+      "icon": "assets/icon.ico",
+      "target": "portable"
+    },
+    "portable": {
+      "artifactName": "ReadChinese-${version}-portable.exe"
+    }
+  }
+}

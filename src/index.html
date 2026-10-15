@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; media-src 'self' data: blob:">
+<title>ReadChinese</title>
+<link rel="stylesheet" href="style.css">
+<script src="vendor/pinyin-pro.js"></script>
+</head>
+<body>
+<header class="titlebar">
+  <button id="btnPin" class="icon pin" title="Ghim (không tự ẩn khi bấm ra ngoài)"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M16 9V4h1a1 1 0 0 0 0-2H7a1 1 0 0 0 0 2h1v5c0 1.66-1.34 3-3 3v2h5.97v7l1 1 1-1v-7H19v-2c-1.66 0-3-1.34-3-3z"/></svg></button>
+  <span class="drag">ReadChinese</span>
+  <button id="btnOcr" class="icon" title="OCR vùng màn hình">⛶</button>
+  <button id="btnSettings" class="icon" title="Cài đặt">⚙</button>
+  <button id="btnClose" class="icon" title="Ẩn">✕</button>
+</header>
+
+<main>
+  <section class="card source">
+    <div id="status" class="status" hidden></div>
+    <div id="ruby" class="ruby" title="Bấm vào 1 chữ để đổi cách đọc (đa âm)"></div>
+    <textarea id="input" placeholder="Dán / gõ tiếng Trung rồi Ctrl+Enter, hoặc bấm ⛶ để OCR…" hidden></textarea>
+    <div class="toolbar">
+      <button id="btnSpeak" class="icon speak" title="Đọc (chọn một đoạn để chỉ đọc đoạn đó)"><svg viewBox="0 0 24 24" width="17" height="17" fill="currentColor"><path class="ic-play" d="M3 9v6h4l5 5V4L7 9H3zm13.5 3A4.5 4.5 0 0 0 14 7.97v8.05A4.47 4.47 0 0 0 16.5 12zM14 3.23v2.06a7 7 0 0 1 0 13.42v2.06A9 9 0 0 0 14 3.23z"/><rect class="ic-stop" x="6" y="6" width="12" height="12" rx="2"/></svg></button>
+      <button id="btnEdit" class="icon" title="Sửa văn bản">✎</button>
+      <button id="btnCopyText" class="icon" title="Copy chữ Hán">⧉</button>
+      <button id="btnCopyPinyin" class="icon" title="Copy pinyin">拼</button>
+      <button id="btnTone" class="chip" title="Kiểu thanh điệu">nǐ hǎo</button>
+      <span class="spacer"></span>
+      <button id="btnSmaller" class="icon" title="Chữ nhỏ hơn">A−</button>
+      <button id="btnBigger" class="icon" title="Chữ to hơn">A+</button>
+      <button id="btnTranslate" class="chip accent" title="Dịch (Ctrl+Enter)">Dịch</button>
+    </div>
+  </section>
+
+  <section class="card result">
+    <div class="res-head"><span class="logo g">G</span> Google · <span id="lblGoogle">English</span>
+      <button class="icon copy" data-target="outGoogle" title="Copy">⧉</button></div>
+    <div id="outGoogle" class="out"></div>
+  </section>
+
+  <section class="card result">
+    <div class="res-head"><span class="logo d">D</span> DeepSeek · <span id="lblDeepseek">Vietnamese</span>
+      <button class="icon copy" data-target="outDeepseek" title="Copy">⧉</button></div>
+    <div id="outDeepseek" class="out"></div>
+  </section>
+</main>
+
+<div id="settings" class="overlay" hidden>
+  <div class="panel">
+    <h3>Cài đặt</h3>
+    <label>Google dịch sang<select id="sGoogleTarget"></select></label>
+    <label>Google API key (tuỳ chọn – dùng khi bị 429)<input id="sGoogleKey" type="password" placeholder="Để trống = dùng Google miễn phí"></label>
+    <label>DeepSeek dịch sang<select id="sDeepseekTarget"></select></label>
+    <label>DeepSeek Base URL<input id="sBaseUrl" placeholder="https://api.deepseek.com"></label>
+    <label>DeepSeek API key
+      <span class="inline"><input id="sKey" type="password" placeholder="sk-..."><button id="btnTestDs" class="chip" type="button">Kiểm tra</button></span>
+      <small id="dsTestMsg" class="hint"></small></label>
+    <label>DeepSeek model<input id="sModel" list="dsModels" placeholder="deepseek-flash"><datalist id="dsModels">
+      <option value="deepseek-flash">nhanh, rẻ – hợp để dịch</option>
+      <option value="deepseek-v4-pro">mạnh hơn, chậm hơn</option>
+    </datalist></label>
+    <label>Đường dẫn Python<input id="sPython" placeholder="python"></label>
+    <label>Phím tắt OCR<input id="sHkOcr"></label>
+    <label>Phím tắt dịch clipboard<input id="sHkClip"></label>
+    <label>Phím tắt mở cửa sổ<input id="sHkShow"></label>
+    <label class="row"><input id="sMerge" type="checkbox"> Nối các dòng OCR thành đoạn</label>
+    <h4>Đọc to (TTS)</h4>
+    <label>Bộ đọc<select id="sTtsEngine">
+      <option value="windows">Windows – offline (giọng cài sẵn trong máy)</option>
+      <option value="edge">Edge TTS – giọng tự nhiên (cần mạng, câu đã đọc được lưu cache)</option>
+    </select></label>
+    <label id="rowWinVoice">Giọng Windows<select id="sWinVoice"></select>
+      <small id="winVoiceHint" class="hint"></small></label>
+    <label id="rowEdgeVoice">Giọng Edge<select id="sEdgeVoice"></select></label>
+    <label>Tốc độ đọc: <b id="rateVal">1.0×</b><input id="sRate" type="range" min="0.5" max="1.5" step="0.1"></label>
+    <label class="row"><input id="sAutoSpeak" type="checkbox"> Tự đọc sau khi OCR</label>
+    <div class="actions">
+      <button id="sCancel" class="chip">Huỷ</button>
+      <button id="sSave" class="chip accent">Lưu</button>
+    </div>
+  </div>
+</div>
+
+<script src="renderer.js"></script>
+</body>
+</html>
