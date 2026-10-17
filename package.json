@@ -1,8 +1,8 @@
 {
   "name": "readchinese",
   "productName": "ReadChinese",
-  "version": "1.2.3",
-  "description": "OCR chữ Hán (RapidOCR) + pinyin trên từng chữ (pinyin-pro) + dịch Google & DeepSeek",
+  "version": "1.4.0",
+  "description": "Screen OCR for Chinese with pinyin above every character, Google + multi-provider AI translation and read-aloud",
   "main": "src/main.js",
   "scripts": {
     "start": "electron .",
@@ -19,13 +19,17 @@
     "productName": "ReadChinese",
     "files": [
       "src/**",
-      "assets/**"
+      "assets/**",
+      "native/**"
     ],
     "extraResources": [
       {
         "from": "python",
         "to": "python",
-        "filter": ["*.py", "requirements.txt"]
+        "filter": [
+          "*.py",
+          "requirements.txt"
+        ]
       }
     ],
     "win": {
@@ -34,6 +38,12 @@
     },
     "portable": {
       "artifactName": "ReadChinese-${version}-portable.exe"
-    }
+    },
+    "asarUnpack": [
+      "**/*.node"
+    ]
+  },
+  "optionalDependencies": {
+    "node-screenshots": "0.2.8"
   }
 }

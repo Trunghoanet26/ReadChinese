@@ -1,49 +1,56 @@
 /* global pinyinPro */
 const $ = (id) => document.getElementById(id);
 const els = {
-  ruby: $('ruby'), input: $('input'), status: $('status'),
-  google: $('outGoogle'), deepseek: $('outDeepseek'), tone: $('btnTone'), pin: $('btnPin'),
+  app: $('app'), ruby: $('ruby'), input: $('input'), status: $('status'), results: $('results'),
+  tone: $('btnTone'), pin: $('btnPin'), main: $('viewMain'), settings: $('viewSettings'),
 };
 
 let cfg = {};
+let LANGS = {};
+let PRESETS = {};
 let text = '';
-let items = [];        // kết quả pinyin-pro cho từng ký tự
-let overrides = {};    // index -> pinyin người dùng chọn (chữ đa âm)
+let items = [];     // pinyin-pro result, one entry per character
+let overrides = {}; // item index -> reading chosen by the user (polyphonic characters)
 let currentJob = 0;
 
-const escapeHtml = (s) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const escapeHtml = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const langName = (c) => LANGS[c] || c;
+
+// ------------------------------------------------------------ auto-fit window height
+const fitObserver = new ResizeObserver(() => {
+  window.api.fit(Math.ceil(els.app.getBoundingClientRect().height) + 2); // +2 = body border
+});
+fitObserver.observe(els.app);
 
 // ------------------------------------------------------------ pinyin
 function toneOpt() { return { toneType: cfg.toneType === 'num' ? 'num' : 'symbol' }; }
 
 function computePinyin() {
   if (typeof pinyinPro === 'undefined') {
-    showStatus('Không tải được pinyin-pro — hãy chạy "npm install".', true);
+    showStatus('pinyin-pro failed to load (src/vendor/pinyin-pro.js missing).', true);
     items = [];
     return;
   }
-  // phân tích cả câu một lần để pinyin-pro chọn đúng âm theo ngữ cảnh (银行 / 行不行)
+  // analyse the whole sentence at once so pinyin-pro picks readings from context (银行 / 行不行)
   items = text ? pinyinPro.pinyin(text, { type: 'all', ...toneOpt() }) : [];
 }
 
 function renderRuby() {
-  const html = items.map((it, i) => {
+  els.ruby.innerHTML = items.map((it, i) => {
     if (!it.isZh) return escapeHtml(it.origin).replace(/\n/g, '<br>');
     const py = overrides[i] ?? it.pinyin;
-    const poly = it.polyphonic?.length > 1 ? ' poly' : '';
-    return `<ruby data-i="${i}" class="${poly.trim()}">${escapeHtml(it.origin)}<rt>${escapeHtml(py)}</rt></ruby>`;
+    const poly = it.polyphonic?.length > 1 ? 'poly' : '';
+    return `<ruby data-i="${i}" class="${poly}">${escapeHtml(it.origin)}<rt>${escapeHtml(py)}</rt></ruby>`;
   }).join('');
-  els.ruby.innerHTML = html;
 }
 
 function pinyinLine() {
-  // pinyin cả câu, gộp theo từ, giữ dấu câu
   return items.map((it, i) => (it.isZh ? (overrides[i] ?? it.pinyin) + ' ' : it.origin))
     .join('').replace(/ +([，。！？、；：,.!?;:）)」』])/g, '$1').replace(/ +\n/g, '\n').trim();
 }
 
 function setText(t, { keepOverrides = false } = {}) {
-  if (t !== text && typeof stopSpeaking === 'function' && tts.speaking) stopSpeaking();
+  if (t !== text && tts.speaking) stopSpeaking();
   text = t;
   els.input.value = t;
   if (!keepOverrides) overrides = {};
@@ -51,7 +58,7 @@ function setText(t, { keepOverrides = false } = {}) {
   renderRuby();
 }
 
-// bấm 1 chữ đa âm → xoay vòng các cách đọc
+// click a polyphonic character -> cycle through its readings
 els.ruby.addEventListener('click', (e) => {
   const r = e.target.closest('ruby');
   if (!r) return;
@@ -74,7 +81,7 @@ function setEditing(on) {
   els.input.hidden = !on;
   els.ruby.hidden = on;
   $('btnEdit').classList.toggle('on', on);
-  if (on) { els.input.focus(); } else { setText(els.input.value.trim()); }
+  if (on) els.input.focus(); else setText(els.input.value.trim());
 }
 function translate() {
   if (!els.input.hidden) setEditing(false);
@@ -82,24 +89,22 @@ function translate() {
 }
 function applyFont() { document.documentElement.style.setProperty('--fs', `${cfg.fontSize}px`); }
 function applyTone() { els.tone.textContent = cfg.toneType === 'num' ? 'ni3 hao3' : 'nǐ hǎo'; }
+function applyPin() {
+  els.pin.classList.toggle('on', !!cfg.pinned);
+  els.pin.title = cfg.pinned ? 'Pinned – click to unpin' : 'Pin (keep the window open when clicking elsewhere)';
+}
 
-// ------------------------------------------------------------ buttons
+// ------------------------------------------------------------ toolbar
 $('btnClose').onclick = () => window.api.hide();
 $('btnOcr').onclick = () => window.api.startCapture();
 $('btnEdit').onclick = () => setEditing(els.input.hidden);
 $('btnTranslate').onclick = translate;
 $('btnCopyText').onclick = () => window.api.copy(text);
 $('btnCopyPinyin').onclick = () => window.api.copy(pinyinLine());
-els.pin.onclick = () => {
-  cfg.pinned = !cfg.pinned;
-  els.pin.classList.toggle('on', cfg.pinned);
-  els.pin.title = cfg.pinned ? 'Đang ghim — bấm để bỏ ghim' : 'Ghim (không tự ẩn khi bấm ra ngoài)';
-  window.api.pin(cfg.pinned);
-};
+els.pin.onclick = () => { cfg.pinned = !cfg.pinned; applyPin(); window.api.pin(cfg.pinned); };
 els.tone.onclick = async () => {
   cfg = await window.api.setConfig({ toneType: cfg.toneType === 'num' ? 'symbol' : 'num' });
   applyTone();
-  overrides = {};
   setText(text);
 };
 const changeFont = async (d) => {
@@ -108,55 +113,84 @@ const changeFont = async (d) => {
 };
 $('btnSmaller').onclick = () => changeFont(-2);
 $('btnBigger').onclick = () => changeFont(2);
-document.querySelectorAll('.copy').forEach((b) => {
-  b.onclick = () => window.api.copy($(b.dataset.target).textContent);
-});
 
 els.input.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); translate(); }
 });
-// cập nhật pinyin trực tiếp khi gõ (chế độ sửa)
-let typingTimer;
+let typingTimer; // live pinyin while editing
 els.input.addEventListener('input', () => {
   clearTimeout(typingTimer);
   typingTimer = setTimeout(() => { text = els.input.value.trim(); overrides = {}; computePinyin(); renderRuby(); }, 250);
 });
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && !$('settings').hidden) $('settings').hidden = true;
-  else if (e.key === 'Escape' && tts.speaking) stopSpeaking();
-  else if (e.key === 'Escape') window.api.hide();
+  if (e.key !== 'Escape') return;
+  if (!els.settings.hidden) closeSettings();
+  else if (tts.speaking) stopSpeaking();
+  else window.api.hide();
 });
 
+// ------------------------------------------------------------ translation result cards
+function buildCards(cards) {
+  els.results.innerHTML = '';
+  for (const c of cards) {
+    const card = document.createElement('section');
+    card.className = 'card result';
+    card.dataset.key = c.key;
+    const letter = c.kind === 'google' ? 'G' : (c.name || 'A').trim().charAt(0).toUpperCase();
+    card.innerHTML = `
+      <div class="res-head">
+        <span class="logo ${c.kind === 'google' ? 'google' : ''}">${escapeHtml(letter)}</span>
+        <span>${escapeHtml(c.name)} · ${escapeHtml(langName(c.lang))}</span>
+        ${c.model ? `<span class="model">${escapeHtml(c.model)}</span>` : ''}
+        <button class="icon copy" title="Copy">⧉</button>
+      </div>
+      <div class="out loading"></div>`;
+    card.querySelector('.copy').onclick = () => window.api.copy(card.querySelector('.out').textContent);
+    els.results.appendChild(card);
+  }
+}
+const outOf = (key) => els.results.querySelector(`.result[data-key="${CSS.escape(key)}"] .out`);
 
-// ------------------------------------------------------------ đọc to (TTS)
+window.api.onTrStart(({ id, cards }) => { currentJob = id; buildCards(cards); });
+window.api.onTrDelta(({ id, key, delta }) => {
+  if (id !== currentJob) return;
+  const out = outOf(key);
+  if (!out) return;
+  out.classList.add('streaming');
+  out.textContent += delta;
+});
+window.api.onTrDone(({ id, key, text: t, error }) => {
+  if (id !== currentJob) return;
+  const out = outOf(key);
+  if (!out) return;
+  out.classList.remove('loading', 'streaming');
+  if (error) { out.classList.add('err'); out.textContent = error; } else if (t != null) out.textContent = t;
+});
+
+// ------------------------------------------------------------ read aloud (TTS)
 const EDGE_VOICES = {
-  'zh-CN-XiaoxiaoNeural': 'Xiaoxiao – nữ, phổ thông (khuyên dùng)',
-  'zh-CN-XiaoyiNeural': 'Xiaoyi – nữ, phổ thông',
-  'zh-CN-YunxiNeural': 'Yunxi – nam, phổ thông',
-  'zh-CN-YunjianNeural': 'Yunjian – nam, phổ thông',
-  'zh-CN-YunyangNeural': 'Yunyang – nam, giọng tin tức',
-  'zh-CN-YunxiaNeural': 'Yunxia – nam trẻ',
-  'zh-CN-liaoning-XiaobeiNeural': 'Xiaobei – nữ, giọng Đông Bắc',
-  'zh-CN-shaanxi-XiaoniNeural': 'Xiaoni – nữ, giọng Thiểm Tây',
-  'zh-TW-HsiaoChenNeural': 'HsiaoChen – nữ, Đài Loan',
-  'zh-TW-YunJheNeural': 'YunJhe – nam, Đài Loan',
-  'zh-HK-HiuMaanNeural': 'HiuMaan – nữ, Quảng Đông (HK)',
+  'zh-CN-XiaoxiaoNeural': 'Xiaoxiao – female, Mandarin (recommended)',
+  'zh-CN-XiaoyiNeural': 'Xiaoyi – female, Mandarin',
+  'zh-CN-YunxiNeural': 'Yunxi – male, Mandarin',
+  'zh-CN-YunjianNeural': 'Yunjian – male, Mandarin',
+  'zh-CN-YunyangNeural': 'Yunyang – male, news style',
+  'zh-CN-YunxiaNeural': 'Yunxia – young male',
+  'zh-CN-liaoning-XiaobeiNeural': 'Xiaobei – female, Northeastern accent',
+  'zh-CN-shaanxi-XiaoniNeural': 'Xiaoni – female, Shaanxi accent',
+  'zh-TW-HsiaoChenNeural': 'HsiaoChen – female, Taiwan',
+  'zh-TW-YunJheNeural': 'YunJhe – male, Taiwan',
+  'zh-HK-HiuMaanNeural': 'HiuMaan – female, Cantonese (HK)',
 };
 const tts = { speaking: false, audio: null, token: 0 };
 const speakBtn = $('btnSpeak');
 
-function zhVoices() {
-  return speechSynthesis.getVoices().filter((v) => /^zh|^cmn|^yue/i.test(v.lang));
-}
-
-function clearReading() {
-  els.ruby.querySelectorAll('ruby.reading').forEach((r) => r.classList.remove('reading'));
-}
+const zhVoices = () => speechSynthesis.getVoices().filter((v) => /^zh|^cmn|^yue/i.test(v.lang));
+const clearReading = () => els.ruby.querySelectorAll('ruby.reading').forEach((r) => r.classList.remove('reading'));
 
 function setSpeaking(on) {
   tts.speaking = on;
   speakBtn.classList.toggle('on', on);
-  speakBtn.title = on ? 'Dừng đọc' : 'Đọc (chọn một đoạn để chỉ đọc đoạn đó)';
+  speakBtn.title = on ? 'Stop' : 'Read aloud (select part of the text to read only that part)';
   if (!on) clearReading();
 }
 
@@ -167,41 +201,38 @@ function stopSpeaking() {
   setSpeaking(false);
 }
 
-// Lấy phần chữ Hán người dùng bôi đen trong vùng pinyin (nếu có), kèm vị trí ký tự bắt đầu
+// Chinese characters selected with the mouse (if any), plus the index of the first one
 function selectedPart() {
   const sel = window.getSelection();
   if (!sel || sel.isCollapsed || !els.ruby.contains(sel.anchorNode)) return null;
   const range = sel.getRangeAt(0);
-  const idx = [...els.ruby.querySelectorAll('ruby')]
-    .filter((r) => range.intersectsNode(r)).map((r) => Number(r.dataset.i));
+  const idx = [...els.ruby.querySelectorAll('ruby')].filter((r) => range.intersectsNode(r)).map((r) => Number(r.dataset.i));
   if (!idx.length) return null;
   const from = idx[0], to = idx[idx.length - 1];
   return { text: items.slice(from, to + 1).map((it) => it.origin).join(''), startItem: from };
 }
 
-// vị trí ký tự (trong chuỗi đang đọc) → chỉ số item để tô sáng chữ đang đọc
+// character offset in the spoken string -> highlight the matching characters
 function highlightRange(startItem, charIndex, charLength) {
   clearReading();
   let pos = 0;
+  const end = charIndex + Math.max(1, charLength);
   for (let i = startItem; i < items.length; i++) {
     const len = items[i].origin.length;
-    if (pos + len > charIndex && pos < charIndex + Math.max(1, charLength)) {
-      els.ruby.querySelector(`ruby[data-i="${i}"]`)?.classList.add('reading');
-    }
+    if (pos + len > charIndex && pos < end) els.ruby.querySelector(`ruby[data-i="${i}"]`)?.classList.add('reading');
     pos += len;
-    if (pos >= charIndex + Math.max(1, charLength)) break;
+    if (pos >= end) break;
   }
 }
 
-async function speak(textToRead, startItem = 0) {
+async function speak(textToRead, startItem = 0, engine = cfg.ttsEngine) {
   stopSpeaking();
   const token = tts.token;
   if (!textToRead.trim()) return;
   setSpeaking(true);
   const voices = zhVoices();
-  const useWindows = cfg.ttsEngine !== 'edge' && voices.length > 0;
 
-  if (useWindows) {
+  if (engine !== 'edge' && voices.length) {
     const u = new SpeechSynthesisUtterance(textToRead);
     u.voice = voices.find((v) => v.name === cfg.ttsWinVoice) || voices.find((v) => /zh-CN/i.test(v.lang)) || voices[0];
     u.lang = u.voice.lang;
@@ -212,21 +243,16 @@ async function speak(textToRead, startItem = 0) {
     return;
   }
 
-  if (cfg.ttsEngine !== 'edge') showStatus('Máy chưa có giọng đọc tiếng Trung của Windows → dùng tạm Edge TTS (xem ⚙).');
+  if (engine !== 'edge') showStatus('No Chinese Windows voice installed → using Edge TTS (see Settings).');
   const r = await window.api.ttsEdge({ text: textToRead, voice: cfg.ttsEdgeVoice, rate: cfg.ttsRate });
-  if (token !== tts.token) return; // đã bấm dừng / đọc câu khác
+  if (token !== tts.token) return; // stopped or replaced meanwhile
   if (!r.ok) {
-    // Edge lỗi mà máy có giọng Windows → đọc tạm bằng giọng Windows
-    if (voices.length) {
-      showStatus(r.error + ' → Đọc tạm bằng giọng Windows.', true);
-      setSpeaking(false);
-      const saved = cfg.ttsEngine;
-      cfg.ttsEngine = 'windows';
-      speak(textToRead, startItem);
-      cfg.ttsEngine = saved;
-      return;
-    }
-    setSpeaking(false); showStatus(r.error, true); return;
+    setSpeaking(false);
+    if (voices.length) { // Edge failed but a Windows voice exists -> use it
+      showStatus(`${r.error} → Using the Windows voice instead.`, true);
+      speak(textToRead, startItem, 'windows');
+    } else showStatus(r.error, true);
+    return;
   }
   tts.audio = new Audio(r.url);
   tts.audio.onended = tts.audio.onerror = () => { if (token === tts.token) { tts.audio = null; setSpeaking(false); } };
@@ -236,9 +262,16 @@ async function speak(textToRead, startItem = 0) {
 speakBtn.onclick = () => {
   if (tts.speaking) { stopSpeaking(); return; }
   const part = selectedPart();
-  if (part) speak(part.text, part.startItem);
-  else speak(text, 0);
+  if (part) speak(part.text, part.startItem); else speak(text, 0);
 };
+
+// ------------------------------------------------------------ settings
+let draftProviders = [];
+
+function fillLangSelect(sel, value) {
+  sel.innerHTML = Object.keys(LANGS).map((c) => `<option value="${c}">${escapeHtml(LANGS[c])}</option>`).join('');
+  sel.value = value;
+}
 
 function fillWinVoices() {
   const voices = zhVoices();
@@ -246,128 +279,163 @@ function fillWinVoices() {
   sel.innerHTML = voices.map((v) => `<option value="${escapeHtml(v.name)}">${escapeHtml(v.name)} (${v.lang})</option>`).join('');
   if (cfg.ttsWinVoice) sel.value = cfg.ttsWinVoice;
   $('winVoiceHint').textContent = voices.length ? ''
-    : 'Chưa có giọng tiếng Trung. Vào Settings → Time & language → Language → thêm "中文(中华人民共和国)" và tick "Text-to-speech", rồi khởi động lại app.';
+    : 'No Chinese voice found. Windows Settings → Time & language → Language & region → add "中文(中华人民共和国)" '
+      + 'with "Text-to-speech", then restart the app.';
 }
-speechSynthesis.onvoiceschanged = () => { if (!$('settings').hidden) fillWinVoices(); };
+speechSynthesis.onvoiceschanged = () => { if (!els.settings.hidden) fillWinVoices(); };
 
-// ------------------------------------------------------------ settings
-const sFields = {
-  sKey: 'deepseekKey', sBaseUrl: 'deepseekBaseUrl', sGoogleKey: 'googleApiKey', sModel: 'deepseekModel', sPython: 'pythonPath',
-  sHkOcr: 'hotkeyOcr', sHkClip: 'hotkeyClipboard', sHkShow: 'hotkeyShow',
-};
-let LANGS = {};
-const LANG_VI = {
-  vi: 'Tiếng Việt', en: 'English', 'zh-CN': '中文 (简体)', 'zh-TW': '中文 (繁體)', ja: '日本語', ko: '한국어',
-  th: 'ไทย', id: 'Bahasa Indonesia', ms: 'Bahasa Melayu', fr: 'Français', de: 'Deutsch', es: 'Español',
-  pt: 'Português', it: 'Italiano', ru: 'Русский', ar: 'العربية', hi: 'हिन्दी',
-};
-const langName = (c) => LANG_VI[c] || LANGS[c] || c;
-function applyLangLabels() {
-  $('lblGoogle').textContent = langName(cfg.googleTarget || 'en');
-  $('lblDeepseek').textContent = langName(cfg.deepseekTarget || 'vi');
-}
-function fillLangSelect(sel, value) {
-  sel.innerHTML = Object.keys(LANGS).map((c) => `<option value="${c}">${langName(c)}</option>`).join('');
-  sel.value = value;
-}
-$('btnSettings').onclick = () => {
-  fillLangSelect($('sGoogleTarget'), cfg.googleTarget || 'en');
-  fillLangSelect($('sDeepseekTarget'), cfg.deepseekTarget || 'vi');
-  for (const [id, k] of Object.entries(sFields)) $(id).value = cfg[k] ?? '';
-  $('sMerge').checked = !!cfg.mergeLines;
-  $('dsTestMsg').textContent = '';
-  $('sTtsEngine').value = cfg.ttsEngine || 'windows';
-  fillWinVoices();
-  $('sEdgeVoice').innerHTML = Object.entries(EDGE_VOICES).map(([k, v]) => `<option value="${k}">${v}</option>`).join('');
-  $('sEdgeVoice').value = cfg.ttsEdgeVoice || 'zh-CN-XiaoxiaoNeural';
-  $('sRate').value = cfg.ttsRate ?? 1;
-  $('rateVal').textContent = `${Number($('sRate').value).toFixed(1)}×`;
-  $('sAutoSpeak').checked = !!cfg.autoSpeak;
-  toggleVoiceRows();
-  $('settings').hidden = false;
-};
-function toggleVoiceRows() {
+function toggleSections() {
+  $('googleBody').classList.toggle('off', !$('sGoogleOn').checked);
+  $('aiBody').classList.toggle('off', !$('sAiOn').checked);
   const edge = $('sTtsEngine').value === 'edge';
   $('rowEdgeVoice').hidden = !edge;
   $('rowWinVoice').hidden = edge;
 }
-$('sTtsEngine').onchange = toggleVoiceRows;
+
+function renderProviders() {
+  const box = $('providers');
+  box.innerHTML = '';
+  draftProviders.forEach((p) => {
+    const el = $('tplProvider').content.firstElementChild.cloneNode(true);
+    const q = (s) => el.querySelector(s);
+    const dl = document.createElement('datalist');
+    dl.id = `dl-${p.id}`;
+    el.appendChild(dl);
+    q('.p-model').setAttribute('list', dl.id);
+
+    q('.p-on').checked = !!p.enabled;
+    q('.p-name').value = p.name || '';
+    q('.p-type').value = p.type || 'openai';
+    q('.p-base').value = p.baseUrl || '';
+    q('.p-key').value = p.apiKey || '';
+    q('.p-model').value = p.model || '';
+    el.classList.toggle('disabled', !p.enabled);
+
+    q('.p-on').onchange = (e) => { p.enabled = e.target.checked; el.classList.toggle('disabled', !p.enabled); };
+    q('.p-name').oninput = (e) => { p.name = e.target.value; };
+    q('.p-base').oninput = (e) => { p.baseUrl = e.target.value.trim(); };
+    q('.p-key').oninput = (e) => { p.apiKey = e.target.value.trim(); };
+    q('.p-model').oninput = (e) => { p.model = e.target.value.trim(); };
+    q('.p-type').onchange = (e) => {
+      p.type = e.target.value;
+      // switch Base URL to the matching default when it is empty or still a default
+      const defaults = Object.values(PRESETS).map((x) => x.baseUrl);
+      if (!p.baseUrl || defaults.includes(p.baseUrl)) {
+        p.baseUrl = p.type === 'anthropic' ? PRESETS.anthropic.baseUrl : PRESETS.openai.baseUrl;
+        q('.p-base').value = p.baseUrl;
+      }
+    };
+    q('.p-del').onclick = () => { draftProviders = draftProviders.filter((x) => x !== p); renderProviders(); };
+    q('.p-test').onclick = async () => {
+      const msg = q('.p-msg');
+      msg.classList.remove('ok');
+      msg.textContent = 'Testing…';
+      const r = await window.api.aiTest({ ...p });
+      if (!r.ok) { msg.textContent = r.error; return; }
+      dl.innerHTML = r.models.map((m) => `<option value="${escapeHtml(m)}">`).join('');
+      if (!p.model && r.models.length) { p.model = r.models[0]; q('.p-model').value = p.model; }
+      msg.classList.add('ok');
+      msg.textContent = r.models.length
+        ? `Connected. ${r.models.length} models available – click the Model box to pick one.`
+        : 'Connected (the server did not return a model list – type the model name).';
+    };
+    box.appendChild(el);
+  });
+}
+
+function openSettings() {
+  fillLangSelect($('sGoogleTarget'), cfg.googleTarget || 'en');
+  fillLangSelect($('sAiTarget'), cfg.aiTarget || 'vi');
+  $('sGoogleOn').checked = cfg.googleEnabled !== false;
+  $('sAiOn').checked = cfg.aiEnabled !== false;
+  $('sGoogleKey').value = cfg.googleApiKey || '';
+  draftProviders = (cfg.aiProviders || []).map((p) => ({ ...p }));
+  renderProviders();
+  $('sAddPreset').innerHTML = Object.entries(PRESETS).map(([k, v]) => `<option value="${k}">${escapeHtml(v.name)}</option>`).join('');
+
+  $('sTtsEngine').value = cfg.ttsEngine || 'windows';
+  fillWinVoices();
+  $('sEdgeVoice').innerHTML = Object.entries(EDGE_VOICES).map(([k, v]) => `<option value="${k}">${escapeHtml(v)}</option>`).join('');
+  $('sEdgeVoice').value = cfg.ttsEdgeVoice || 'zh-CN-XiaoxiaoNeural';
+  $('sRate').value = cfg.ttsRate ?? 1;
+  $('rateVal').textContent = `${Number($('sRate').value).toFixed(1)}×`;
+  $('sAutoSpeak').checked = !!cfg.autoSpeak;
+
+  $('sHkOcr').value = cfg.hotkeyOcr || '';
+  $('sHkClip').value = cfg.hotkeyClipboard || '';
+  $('sHkShow').value = cfg.hotkeyShow || '';
+  $('sMerge').checked = !!cfg.mergeLines;
+  $('sPython').value = cfg.pythonPath || '';
+  $('sThreads').value = cfg.ocrThreads || 2;
+  window.api.captureBackend().then((b) => { $('backendInfo').textContent = `Screen capture: ${b}`; });
+
+  toggleSections();
+  els.main.hidden = true;
+  els.settings.hidden = false;
+  document.scrollingElement.scrollTop = 0;
+}
+function closeSettings() {
+  els.settings.hidden = true;
+  els.main.hidden = false;
+}
+
+$('btnSettings').onclick = () => (els.settings.hidden ? openSettings() : closeSettings());
+$('sGoogleOn').onchange = toggleSections;
+$('sAiOn').onchange = toggleSections;
+$('sTtsEngine').onchange = toggleSections;
 $('sRate').oninput = () => { $('rateVal').textContent = `${Number($('sRate').value).toFixed(1)}×`; };
-$('btnTestDs').onclick = async () => {
-  const msg = $('dsTestMsg');
-  msg.classList.remove('ok');
-  msg.textContent = 'Đang kiểm tra…';
-  const r = await window.api.deepseekTest({ baseUrl: $('sBaseUrl').value, key: $('sKey').value.trim() });
-  if (!r.ok) { msg.textContent = r.error; return; }
-  msg.classList.add('ok');
-  msg.textContent = `Kết nối OK. Model khả dụng: ${r.models.join(', ') || '(không rõ)'}`;
-  if (r.models.length) {
-    $('dsModels').innerHTML = r.models.map((m) => `<option value="${escapeHtml(m)}">`).join('');
-    if (!r.models.includes($('sModel').value.trim())) $('sModel').value = r.models[0];
-  }
+$('btnAddProvider').onclick = async () => {
+  const preset = PRESETS[$('sAddPreset').value];
+  draftProviders.push({ id: await window.api.aiNewId(), ...preset, apiKey: '', enabled: true });
+  renderProviders();
+  $('providers').lastElementChild?.scrollIntoView({ block: 'nearest' });
 };
-$('sCancel').onclick = () => { $('settings').hidden = true; };
+$('sCancel').onclick = closeSettings;
 $('sSave').onclick = async () => {
   const patch = {
-    mergeLines: $('sMerge').checked,
+    googleEnabled: $('sGoogleOn').checked,
     googleTarget: $('sGoogleTarget').value,
-    deepseekTarget: $('sDeepseekTarget').value,
+    googleApiKey: $('sGoogleKey').value.trim(),
+    aiEnabled: $('sAiOn').checked,
+    aiTarget: $('sAiTarget').value,
+    aiProviders: draftProviders.map((p) => ({ ...p, name: (p.name || '').trim() || 'AI' })),
     ttsEngine: $('sTtsEngine').value,
     ttsWinVoice: $('sWinVoice').value || cfg.ttsWinVoice || '',
     ttsEdgeVoice: $('sEdgeVoice').value,
     ttsRate: Number($('sRate').value),
     autoSpeak: $('sAutoSpeak').checked,
+    hotkeyOcr: $('sHkOcr').value.trim(),
+    hotkeyClipboard: $('sHkClip').value.trim(),
+    hotkeyShow: $('sHkShow').value.trim(),
+    mergeLines: $('sMerge').checked,
+    pythonPath: $('sPython').value.trim() || 'python',
+    ocrThreads: Math.max(1, Math.min(16, parseInt($('sThreads').value, 10) || 2)),
   };
-  const langChanged = patch.googleTarget !== cfg.googleTarget || patch.deepseekTarget !== cfg.deepseekTarget;
-  for (const [id, k] of Object.entries(sFields)) patch[k] = $(id).value.trim();
+  const retranslate = ['googleEnabled', 'googleTarget', 'aiEnabled', 'aiTarget']
+    .some((k) => patch[k] !== cfg[k]) || JSON.stringify(patch.aiProviders) !== JSON.stringify(cfg.aiProviders);
   cfg = await window.api.setConfig(patch);
-  $('settings').hidden = true;
-  applyLangLabels();
-  if (langChanged && text) window.api.translate(text); // dịch lại theo ngôn ngữ mới
+  closeSettings();
+  if (retranslate && text) window.api.translate(text);
 };
 
-// ------------------------------------------------------------ events từ main
+// ------------------------------------------------------------ events from the main process
 window.api.onOcrStart(() => {
-  showStatus('Đang nhận dạng chữ…');
+  showStatus('Recognizing…');
   setEditing(false);
   setText('');
-  els.google.textContent = ''; els.deepseek.textContent = '';
+  els.results.innerHTML = '';
 });
 window.api.onOcrResult(({ text: t, autoSpeak }) => {
-  showStatus(t ? '' : 'Không tìm thấy chữ trong vùng đã chọn.', !t);
+  showStatus(t ? '' : 'No text found in the selected area.', !t);
   setText(t);
   if (t && autoSpeak) speak(t, 0);
 });
-window.api.onOcrError((msg) => showStatus('Lỗi OCR: ' + msg, true));
+window.api.onOcrError((msg) => showStatus(`OCR error: ${msg}`, true));
 window.api.onOcrStatus((msg) => showStatus(msg));
 window.api.onInputSet((t) => { showStatus(''); setText(t); });
 
-window.api.onTrStart(({ id }) => {
-  currentJob = id;
-  for (const el of [els.google, els.deepseek]) {
-    el.textContent = ''; el.classList.remove('err'); el.classList.add('loading');
-  }
-});
-window.api.onGoogle(({ id, text: t, error }) => {
-  if (id !== currentJob) return;
-  els.google.classList.remove('loading');
-  if (error) { els.google.classList.add('err'); els.google.textContent = error; } else els.google.textContent = t;
-});
-window.api.onDeepseekDelta(({ id, delta }) => {
-  if (id === currentJob) els.deepseek.textContent += delta;
-});
-window.api.onDeepseekDone(({ id, error }) => {
-  if (id !== currentJob) return;
-  els.deepseek.classList.remove('loading');
-  if (error) { els.deepseek.classList.add('err'); els.deepseek.textContent = error; }
-});
-
 // ------------------------------------------------------------ init
 (async () => {
-  cfg = await window.api.getConfig();
-  LANGS = await window.api.getLangs();
-  applyLangLabels();
-  applyFont(); applyTone();
-  els.pin.classList.toggle('on', !!cfg.pinned);
-  els.pin.title = cfg.pinned ? 'Đang ghim — bấm để bỏ ghim' : 'Ghim (không tự ẩn khi bấm ra ngoài)';
+  [cfg, LANGS, PRESETS] = await Promise.all([window.api.getConfig(), window.api.getLangs(), window.api.aiPresets()]);
+  applyFont(); applyTone(); applyPin();
 })();

@@ -1,10 +1,10 @@
-"""OCR server dùng RapidOCR, giao tiếp với Electron qua stdin/stdout (mỗi dòng 1 JSON).
+"""RapidOCR server talking to Electron over stdin/stdout (one JSON object per line).
 
 Request : {"id": 1, "path": "C:/.../shot.png"}
 Response: {"id": 1, "ok": true, "lines": [{"text": "...", "score": 0.98, "box": [[x,y],...]}]}
 
-Hỗ trợ cả 2 gói:
-  pip install rapidocr_onnxruntime      (API cũ, ổn định)
+Supports both packages:
+  pip install rapidocr_onnxruntime      (legacy API, stable)
   pip install rapidocr onnxruntime      (API mới v2/v3)
 """
 import io
@@ -12,7 +12,7 @@ import json
 import os
 import sys
 
-# Giữ stdout thật cho JSON, mọi log của thư viện đẩy sang stderr
+# Keep the real stdout for JSON; route all library logging to stderr
 REAL_OUT = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", line_buffering=True)
 sys.stdout = sys.stderr
 sys.stdin.reconfigure(encoding="utf-8")
@@ -23,7 +23,7 @@ def send(obj):
     REAL_OUT.flush()
 
 
-THREADS = int(os.environ.get("OCR_THREADS", "4") or 4)
+THREADS = int(os.environ.get("OCR_THREADS", "2") or 2)
 
 engine = None
 mode = None
@@ -31,7 +31,7 @@ mode = None
 
 def make_legacy():
     from rapidocr_onnxruntime import RapidOCR  # type: ignore
-    # giới hạn luồng để OCR không chiếm hết CPU (bản cũ không nhận tham số → bỏ qua)
+    # limit threads so OCR does not saturate the CPU (older versions ignore these kwargs)
     for kw in ({"intra_op_num_threads": THREADS, "inter_op_num_threads": 1}, {}):
         try:
             return RapidOCR(**kw)
@@ -60,7 +60,7 @@ except ImportError:
         mode = "new"
     except ImportError as e:
         send({"id": 0, "ok": False, "fatal": True,
-              "error": "Chưa cài RapidOCR. Chạy: pip install rapidocr_onnxruntime  (" + str(e) + ")"})
+              "error": "RapidOCR is not installed. Run: pip install rapidocr_onnxruntime  (" + str(e) + ")"})
         sys.exit(1)
 
 
@@ -68,44 +68,35 @@ def to_list(v):
     return v.tolist() if hasattr(v, "tolist") else v
 
 
-# Ngưỡng nới lỏng hơn mặc định để không bỏ sót chữ nhỏ / chữ mờ
+# Looser thresholds than the defaults so small / faint text is not dropped
 TUNE = {"text_score": 0.3, "box_thresh": 0.3, "unclip_ratio": 1.8}
 
 
 def preprocess(path):
-    """Đọc ảnh và làm cho dễ nhận dạng hơn. Trả về (ảnh, scale, pad) để quy đổi toạ độ ngược lại.
-    - Nền tối (dark mode) → đảo màu thành chữ tối trên nền sáng (model nhận tốt hơn hẳn)
-    - Ảnh nhỏ → phóng to (chữ ~12–14px trên màn hình thường bị bỏ sót)
-    - Thêm viền: chữ sát mép vùng chọn hay bị mất
+    """Light pre-processing before OCR. Returns (image, scale, pad) to map boxes back.
+    - Dark background (dark mode) -> invert to dark text on light background (the model reads it much better)
+    - Add a small border: text touching the crop edge is often missed
+    (No upscaling: keeps OCR fast and light on CPU.)
     """
-    import cv2  # đi kèm RapidOCR
+    import cv2  # ships with RapidOCR
     import numpy as np
 
-    img = cv2.imdecode(np.fromfile(path, dtype=np.uint8), cv2.IMREAD_COLOR)  # hỗ trợ đường dẫn Unicode
+    img = cv2.imdecode(np.fromfile(path, dtype=np.uint8), cv2.IMREAD_COLOR)  # supports Unicode paths
     if img is None:
         return path, 1.0, 0
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    if float(gray.mean()) < 110:
+    if float(cv2.cvtColor(img, cv2.COLOR_BGR2GRAY).mean()) < 110:
         img = 255 - img
-    h, w = img.shape[:2]
-    scale = 1.0
-    if max(h, w) < 1600:
-        scale = min(2.5, 1600.0 / max(h, w), 3200.0 / max(1, max(h, w)))
-        if scale > 1.15:
-            img = cv2.resize(img, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
-        else:
-            scale = 1.0
-    pad = 24
+    pad = 16
     edge = np.concatenate([img[0], img[-1], img[:, 0], img[:, -1]])
     color = [int(c) for c in np.median(edge, axis=0)]
     img = cv2.copyMakeBorder(img, pad, pad, pad, pad, cv2.BORDER_CONSTANT, value=color)
-    return img, scale, pad
+    return img, 1.0, pad
 
 
 def call_engine(img):
     try:
         return engine(img, **TUNE)
-    except TypeError:  # phiên bản không nhận tham số tinh chỉnh
+    except TypeError:  # version without tuning kwargs
         return engine(img)
 
 
@@ -127,7 +118,7 @@ def raw_lines(img):
 
 
 def run(path):
-    if not isinstance(path, str):  # ảnh numpy (dùng cho warm-up)
+    if not isinstance(path, str):  # numpy image (warm-up)
         return raw_lines(path)
     try:
         img, scale, pad = preprocess(path)
@@ -135,9 +126,9 @@ def run(path):
         img, scale, pad = path, 1.0, 0
     lines = raw_lines(img)
     if not lines and not isinstance(img, str):
-        lines = raw_lines(path)  # dự phòng: thử ảnh gốc
+        lines = raw_lines(path)  # fallback: try the original image
         scale, pad = 1.0, 0
-    # quy đổi toạ độ khung về ảnh gốc
+    # map box coordinates back to the original image
     for ln in lines:
         if ln["box"]:
             ln["box"] = [[(p[0] - pad) / scale, (p[1] - pad) / scale] for p in ln["box"]]
@@ -146,7 +137,7 @@ def run(path):
 
 send({"id": 0, "ok": True, "ready": True, "engine": mode})
 
-# chạy thử 1 lần với ảnh nhỏ để lần OCR thật đầu tiên không bị chậm
+# warm-up run on a tiny image so the first real OCR is not slow
 try:
     import numpy as np  # có sẵn cùng onnxruntime
     _img = np.full((48, 160, 3), 255, dtype=np.uint8)
